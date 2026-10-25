@@ -15,13 +15,25 @@
 #######################################
 # core     → pack_core.py     → /cores/<name>.bin
 # homebrew → pack_homebrew.py → /homebrews/<name>.bin
-PROJECT_KIND ?= core
+PROJECT_KIND ?= homebrew
 
-CORE_NAME  := example
+CORE_NAME  := hode
 CORE_ENTRY := app_main
 
+# hode (src/hode, Gregory Montoir's engine, changes under #ifdef GNW) and
+# the port (src/port).
+HODE_SOURCES := $(filter-out src/hode/main.cpp src/hode/fs_posix.cpp,$(wildcard src/hode/*.cpp))
+HD_CXX_SOURCES := $(HODE_SOURCES) \
+src/port/hd_fs.cpp \
+src/port/hd_system.cpp \
+src/port/hd_game.cpp
+
+CORE_CXX_SOURCES := $(HD_CXX_SOURCES) src/port/hd_cxx.cpp
 CORE_C_SOURCES := \
-src/main.c
+src/port/hd_heap.c \
+src/port/hd_main.c
+
+CORE_C_INCLUDES := -Isrc/port -Isrc/hode
 
 # Relative path so Docker bind-mounts work (do NOT use $(abspath) — it
 # bakes the host path into Make prerequisites / .d files). Do not name
@@ -76,14 +88,14 @@ HEADER_LOGO := src/assets/header.png
 
 else ifeq ($(PROJECT_KIND),homebrew)
 CORE_C_DEFS := \
--DPROJECT_KIND_HOMEBREW=1
+-DPROJECT_KIND_HOMEBREW=1 \
+-DGNW
 
-PACKED_BIN := ExampleHB.bin
-HB_NAME    := Example Homebrew
-# Compact coverflow tile (HW max is 186x100 — do not use full width by default).
+PACKED_BIN := HeartOfDarkness.bin
+HB_NAME    := Heart of Darkness
+# The launcher's cover: src/assets/cover.png.
 COVER_JPG    := $(BUILD_DIR)/cover.jpg
-COVER_WIDTH  ?= 128
-COVER_HEIGHT ?= 96
+COVER_SRC    := src/assets/cover.png
 
 else
 $(error PROJECT_KIND must be 'core' or 'homebrew' (got '$(PROJECT_KIND)'))
@@ -93,7 +105,14 @@ include $(GNW_CORE_SDK)/Makefile
 
 PACK_CORE     := $(GNW_CORE_SDK)/tools/pack_core.py
 PACK_HOMEBREW := $(GNW_CORE_SDK)/tools/pack_homebrew.py
-GEN_COVER     := scripts/gen_homebrew_cover.py
+MAKE_COVER    := scripts/make_cover.py
+
+# hode is built with its allocations on the port's heap (hd_glue.h) and
+# without the SDK's operator new (hd_cxx.cpp has it).
+CXX_OBJECTS := $(filter-out $(BUILD_DIR)/gw_core_cxx_support.o,$(CXX_OBJECTS))
+HD_CXX_OBJECTS := $(addprefix $(BUILD_DIR)/,$(notdir $(HD_CXX_SOURCES:.cpp=.o)))
+$(HD_CXX_OBJECTS): CXXFLAGS += -include src/port/hd_glue.h -Wno-unused-parameter -Wno-class-memaccess \
+	-Wno-unused-variable -Wno-unused-but-set-variable -Wno-unused-function
 
 #######################################
 # Packed header version
@@ -131,13 +150,10 @@ cover: $(COVER_JPG)
 
 # Must stay ≤ gui.c COVER_MAX_WIDTH x COVER_MAX_HEIGHT (186x100) and
 # COVER_SIZE (10 KiB) — oversized covers smash the HW JPEG scratch.
-$(COVER_JPG): $(GEN_COVER)
-	$(V)$(ECHO) [ COVER ] $(COVER_JPG) ($(COVER_WIDTH)x$(COVER_HEIGHT))
-	$(V)python3 $(GEN_COVER) \
-		--out $(COVER_JPG) \
-		--title "$(HB_NAME)" \
-		--width $(COVER_WIDTH) \
-		--height $(COVER_HEIGHT)
+$(COVER_JPG): $(MAKE_COVER) $(COVER_SRC)
+	$(V)mkdir -p $(BUILD_DIR)
+	$(V)$(ECHO) "[ COVER ] $(COVER_JPG)"
+	$(V)python3 $(MAKE_COVER) --in $(COVER_SRC) --out $(COVER_JPG)
 
 pack: $(TARGET_BIN) $(COVER_JPG)
 	$(V)$(ECHO) [ PACK GWHB ] $(PACKED_BIN) version=$(CORE_VERSION)

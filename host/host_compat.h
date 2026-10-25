@@ -23,6 +23,9 @@ void gw_core_bridge_init(void);
 void host_set_rom_path(const char *path);
 int host_poll_events(void); /* returns 0 if the window should quit */
 
+/* odroid_sdcard.h / odroid_system.h pieces the device gets from the ABI. */
+int odroid_sdcard_mkdir(const char *path);
+
 #ifdef __cplusplus
 }
 #endif

@@ -29,4 +29,10 @@ static inline uint32_t HAL_GetTick(void)
     return host_platform_ticks_ms();
 }
 
+static inline void HAL_Delay(uint32_t ms)
+{
+    extern void host_platform_delay_ms(uint32_t ms);
+    host_platform_delay_ms(ms);
+}
+
 #endif /* HOST_STM32H7XX_HAL_H */

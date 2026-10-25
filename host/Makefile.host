@@ -15,7 +15,7 @@ HOST_CC    ?= cc
 HOST_BUILD_DIR := build/host/$(PROJECT_KIND)_sdl$(HOST_SDL)
 
 ifeq ($(PROJECT_KIND),homebrew)
-HOST_BIN := ExampleHB_host
+HOST_BIN := HeartOfDarkness_host
 else
 HOST_BIN := $(CORE_NAME)_host
 endif
@@ -48,6 +48,7 @@ HOST_DEFS := \
 	$(CORE_C_DEFS)
 
 HOST_INCLUDES := \
+	$(CORE_C_INCLUDES) \
 	-Ihost \
 	-Ihost/stubs \
 	-I$(GNW_CORE_SDK)/src \
@@ -62,15 +63,23 @@ HOST_CFLAGS := -O2 -g -Wall -Wextra -std=c11 \
 	-include host/stubs/config.h \
 	$(HOST_DEFS) $(HOST_INCLUDES)
 
+HOST_CXX ?= c++
+HOST_CXXFLAGS := -O2 -g -Wall -fno-exceptions -fno-rtti -include host/stubs/config.h \
+	$(HOST_DEFS) $(HOST_INCLUDES) -Wno-unused-parameter -Wno-class-memaccess \
+	-Wno-unused-variable -Wno-unused-but-set-variable -Wno-unused-function
+
 HOST_SRCS := \
 	$(CORE_C_SOURCES) \
+	$(filter-out %gw_core_cxx_support.cpp,$(CORE_CXX_SOURCES)) \
 	host/crc32.c \
 	host/host_main.c \
 	host/host_platform.c \
 	host/host_emu.c \
 	host/host_i18n.c
 
-HOST_OBJS := $(addprefix $(HOST_BUILD_DIR)/,$(HOST_SRCS:.c=.o))
+HOST_OBJS := $(addprefix $(HOST_BUILD_DIR)/,$(patsubst %.cpp,%.o,$(HOST_SRCS:.c=.o)))
+HOST_HD_OBJS := $(addprefix $(HOST_BUILD_DIR)/,$(HD_CXX_SOURCES:.cpp=.o))
+$(HOST_HD_OBJS): HOST_CXXFLAGS += -include src/port/hd_glue.h
 HOST_DEPS := $(HOST_OBJS:.o=.d)
 
 .PHONY: host host_clean
@@ -80,13 +89,18 @@ host: $(HOST_BIN)
 
 $(HOST_BIN): $(HOST_OBJS)
 	$(V)$(ECHO) [ LD HOST ] $@
-	$(V)$(HOST_CC) -o $@ $(HOST_OBJS) $(HOST_PKG_LIBS)
+	$(V)$(HOST_CXX) -o $@ $(HOST_OBJS) $(HOST_PKG_LIBS)
 
 # Explicit pattern under HOST_BUILD_DIR only (do not collide with sdk ARM rules).
 $(HOST_BUILD_DIR)/src/%.o: src/%.c
 	$(V)mkdir -p $(dir $@)
 	$(V)$(ECHO) [ CC HOST ] $<
 	$(V)$(HOST_CC) $(HOST_CFLAGS) -MMD -MP -MF"$(@:%.o=%.d)" -c $< -o $@
+
+$(HOST_BUILD_DIR)/src/%.o: src/%.cpp
+	$(V)mkdir -p $(dir $@)
+	$(V)$(ECHO) [ CXX HOST ] $<
+	$(V)$(HOST_CXX) $(HOST_CXXFLAGS) -MMD -MP -MF"$(@:%.o=%.d)" -c $< -o $@
 
 $(HOST_BUILD_DIR)/host/%.o: host/%.c
 	$(V)mkdir -p $(dir $@)
@@ -95,7 +109,7 @@ $(HOST_BUILD_DIR)/host/%.o: host/%.c
 
 host_clean:
 	$(V)rm -rf build/host
-	$(V)rm -f $(CORE_NAME)_host ExampleHB_host
+	$(V)rm -f $(CORE_NAME)_host HeartOfDarkness_host
 
 clean:: host_clean
 
