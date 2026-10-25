@@ -90,6 +90,10 @@ else ifeq ($(PROJECT_KIND),homebrew)
 CORE_C_DEFS := \
 -DPROJECT_KIND_HOMEBREW=1 \
 -DGNW
+# make HD_DEBUG_LEVEL=1: <data folder>/level.txt starts that level (tests)
+ifneq ($(HD_DEBUG_LEVEL),)
+CORE_C_DEFS += -DHD_DEBUG_LEVEL=1
+endif
 
 PACKED_BIN := HeartOfDarkness.bin
 HB_NAME    := Heart of Darkness

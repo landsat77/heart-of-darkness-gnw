@@ -4,6 +4,7 @@
  * quits. Progress is kept by the game in setup.cfg (save folder).
  */
 #include "game.h"
+#include "level.h"
 #include "menu.h"
 #include "mixer.h"
 #include "paf.h"
@@ -29,6 +30,61 @@ static void mixAudio(void *userdata, int16_t *buf, int len) {
 
 Game *hd_game;
 
+/* The cutscenes' picture (src/hode/paf.cpp, GNW): the shadow layer, which
+   the game draws again every frame and the menus do not use. */
+uint8_t *hd_cutscene_picture() {
+	return hd_game->_video->_shadowLayer;
+}
+static bool started, inLevel;
+static bool pending;
+static hd_state_t pendingState;
+
+extern "C" int hd_game_get_state(hd_state_t *st) {
+	if (!inLevel || !hd_game || !hd_game->_level) {
+		return 0;
+	}
+	st->level = hd_game->_currentLevel;
+	st->checkpoint = hd_game->_level->_checkpoint;
+	st->difficulty = hd_game->_difficulty;
+	st->volume = hd_game->_snd_masterVolume;
+	st->cutscenes = hd_game->_paf->_playedMask;
+	return 1;
+}
+
+extern "C" int hd_game_set_state(const hd_state_t *st) {
+	if (st->level < 0 || st->level >= kLvl_test || st->checkpoint < 0) {
+		return 0;
+	}
+	if (started && !inLevel) {
+		return 0; /* the menus, a cutscene between levels */
+	}
+	pendingState = *st;
+	pending = true;
+	if (inLevel) {
+		hd_game->_endLevel = true;
+	}
+	return 1;
+}
+
+/* A state to play: its level and checkpoint, the rest of it set here. */
+static bool takePending(Game *g, int *level, int *checkpoint) {
+	if (!pending) {
+		return false;
+	}
+	pending = false;
+	*level = pendingState.level;
+	*checkpoint = pendingState.checkpoint;
+	if (*checkpoint >= g->_res->_datHdr.levelCheckpointsCount[*level]) {
+		*checkpoint = 0;
+	}
+	g->_difficulty = pendingState.difficulty;
+	g->_snd_masterVolume = pendingState.volume;
+	g->_paf->setVolume(pendingState.volume);
+	g->_paf->_playedMask = pendingState.cutscenes;
+	g->_resumeGame = false;
+	return true;
+}
+
 extern "C" void hd_game_run(int level, int checkpoint) {
 	const bool resume = level < 0; // from setup.cfg, with the menu
 	if (level < 0) {
@@ -46,9 +102,13 @@ extern "C" void hd_game_run(int level, int checkpoint) {
 	cb.userdata = g;
 	g_system->startAudio(cb);
 	g->displayLoadingScreen();
+	started = true;
 	do {
 		g->loadSetupCfg(resume);
-		if (resume) {
+		bool levelChanged = false;
+		if (takePending(g, &level, &checkpoint)) {
+			levelChanged = true; /* no level intro */
+		} else if (resume) {
 			Menu *m = new Menu(g, g->_paf, g->_res, g->_video);
 			const bool runGame = m->mainLoop();
 			delete m;
@@ -56,12 +116,17 @@ extern "C" void hd_game_run(int level, int checkpoint) {
 				break;
 			}
 		}
-		bool levelChanged = false;
 		while (!g_system->inp.quit && level < kLvl_test) {
 			g->displayLoadingScreen();
+			inLevel = true;
 			g->mainLoop(level, checkpoint, levelChanged);
+			inLevel = false;
 			if (resume) {
 				g->saveSetupCfg();
+			}
+			if (takePending(g, &level, &checkpoint)) {
+				levelChanged = true;
+				continue;
 			}
 			if (g->_res->_isDemo) {
 				break;

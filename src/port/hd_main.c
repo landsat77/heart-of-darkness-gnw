@@ -101,9 +101,9 @@ const char *hd_plat_save_dir(void) { return save_dir; }
 
 static unsigned stat_frames;	/* game frames presented (log every 5 s) */
 static const uint8_t *frame_pixels;
+static int frame_pitch;
 static uint8_t frame_palette[256 * 3];
 static int frame_dx, frame_dy;
-static bool frame_pending;
 static uint16_t xmap[WIDTH];
 static uint8_t ymap[HEIGHT];
 
@@ -133,7 +133,7 @@ static void blit(void)
 			memset(d, 0, WIDTH);
 			continue;
 		}
-		const uint8_t *s = frame_pixels + sy * HD_W;
+		const uint8_t *s = frame_pixels + sy * frame_pitch;
 		if (frame_dx == 0) {
 			for (int x = 0; x < WIDTH; x++) d[x] = s[xmap[x]];
 		} else {
@@ -151,23 +151,23 @@ static void repaint(void)
 	common_ingame_overlay();
 }
 
-void hd_plat_present(const uint8_t *pixels, const uint8_t *palette, int dx, int dy)
+static void wait_swap(void)
+{
+	while (lcd_is_swap_pending()) wdog_refresh();
+}
+
+void hd_plat_present(const uint8_t *pixels, int pitch, const uint8_t *palette, int dx, int dy)
 {
 	frame_pixels = pixels;
+	frame_pitch = pitch;
 	memcpy(frame_palette, palette, sizeof frame_palette);
 	frame_dx = dx;
 	frame_dy = dy;
-	frame_pending = true;
 	stat_frames++;
-}
-
-static void show_frame(void)
-{
-	if (!frame_pending || lcd_is_swap_pending()) return;
+	wait_swap();
 	blit();
 	common_ingame_overlay();
 	lcd_swap();
-	frame_pending = false;
 }
 
 /* --- buttons --- */
@@ -206,7 +206,10 @@ static void read_buttons(void)
  *                  (U D L R A B T = TIME/run G = GAME/esc, - = none)
  * HD_SHOTS=dir     with HD_SHOT_AT="tick,tick,...": the LCD as PPM files
  * HD_HEAP_KB=n     heap size (default: what the console has)
+ * HD_STATE=file    with HD_SAVE_AT=tick / HD_LOAD_AT=tick: save state tests
  */
+static bool LoadState(const char *path);
+static bool SaveState(const char *path);
 static int test_tick;
 
 static bool in_list(const char *list, int value)
@@ -260,6 +263,11 @@ static void test_step(void)
 			fclose(f);
 		}
 	}
+	const char *state = getenv("HD_STATE");
+	if (state && getenv("HD_SAVE_AT") && atoi(getenv("HD_SAVE_AT")) == test_tick)
+		printf("hode: save %s\n", SaveState(state) ? "ok" : "FAILED");
+	if (state && getenv("HD_LOAD_AT") && atoi(getenv("HD_LOAD_AT")) == test_tick)
+		printf("hode: load %s\n", LoadState(state) ? "ok" : "FAILED");
 	if (getenv("HD_TICKS") && test_tick >= atoi(getenv("HD_TICKS"))) {
 		printf("hode: heap used %lu KB, peak %lu KB, total %lu KB\n", (unsigned long)(hd_heap_used() / 1024),
 		       (unsigned long)(hd_heap_peak() / 1024), (unsigned long)(hd_heap_total() / 1024));
@@ -298,7 +306,6 @@ void hd_plat_service(void)
 #ifdef HOST_BUILD
 	test_step();
 #endif
-	show_frame();
 
 	memset(stereo, 0, sizeof stereo);
 	if (audio_proc && !audio_locked) audio_proc(audio_user, stereo, AUDIO_PERIOD * 2);
@@ -374,8 +381,48 @@ void hd_plat_fatal(const char *message)
 
 /* --- system callbacks --- */
 
-static bool LoadState(const char *path) { (void)path; return false; }
-static bool SaveState(const char *path) { (void)path; return false; }
+/* Save states: the level and checkpoint (hd_game.h), restarted on load.
+   File: "HODS", u32 version 1, then hd_state_t's fields as u32. */
+#define STATE_MAGIC "HODS"
+#define STATE_WORDS 5
+
+static bool LoadState(const char *path)
+{
+	FILE *f = fopen(path, "rb");
+	if (!f) return false;
+	uint8_t buf[8 + 4 * STATE_WORDS];
+	size_t n = fread(buf, 1, sizeof buf, f);
+	fclose(f);
+	if (n != sizeof buf || memcmp(buf, STATE_MAGIC, 4) != 0 || buf[4] != 1) return false;
+	uint32_t w[STATE_WORDS];
+	for (int i = 0; i < STATE_WORDS; i++) {
+		const uint8_t *p = buf + 8 + 4 * i;
+		w[i] = p[0] | p[1] << 8 | p[2] << 16 | (uint32_t)p[3] << 24;
+	}
+	hd_state_t st = { (int)w[0], (int)w[1], (int)w[2], (int)w[3], w[4] };
+	return hd_game_set_state(&st) != 0;
+}
+
+static bool SaveState(const char *path)
+{
+	hd_state_t st;
+	if (!hd_game_get_state(&st)) return false;
+	const uint32_t w[STATE_WORDS] = { (uint32_t)st.level, (uint32_t)st.checkpoint, (uint32_t)st.difficulty,
+	                                  (uint32_t)st.volume, st.cutscenes };
+	uint8_t buf[8 + 4 * STATE_WORDS] = { 'H', 'O', 'D', 'S', 1, 0, 0, 0 };
+	for (int i = 0; i < STATE_WORDS; i++) {
+		uint8_t *p = buf + 8 + 4 * i;
+		p[0] = w[i];
+		p[1] = w[i] >> 8;
+		p[2] = w[i] >> 16;
+		p[3] = w[i] >> 24;
+	}
+	FILE *f = fopen(path, "wb");
+	if (!f) return false;
+	bool ok = fwrite(buf, 1, sizeof buf, f) == sizeof buf;
+	fclose(f);
+	return ok;
+}
 
 static void *Screenshot(void)
 {
@@ -399,8 +446,6 @@ static void SramSave(void) {}
 
 void app_main(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 {
-	(void)load_state;
-	(void)save_slot;
 #ifndef HOST_BUILD
 	gw_core_bridge_init();
 #endif
@@ -432,7 +477,7 @@ void app_main(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 	size_t ram = ram_get_free_size();
 #ifdef HOST_BUILD
 	/* the console's: RAM_EMU left after the code, and DTCM */
-	size_t want = (getenv("HD_HEAP_KB") ? atoi(getenv("HD_HEAP_KB")) : 530) * 1024 + RAM_MARGIN;
+	size_t want = (getenv("HD_HEAP_KB") ? atoi(getenv("HD_HEAP_KB")) : 590) * 1024 + RAM_MARGIN;
 	if (ram > want) ram = want;
 #endif
 	if (ram > RAM_MARGIN) {
@@ -453,6 +498,29 @@ void app_main(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 	printf("hode: heap %lu KB\n", (unsigned long)(hd_heap_total() / 1024));
 
 	audio_start_playing(AUDIO_PERIOD);
+	/* "Resume game": the state is pending, hd_game_run() starts there */
+	if (load_state) odroid_system_emu_load_state(save_slot);
+#ifdef HD_DEBUG_LEVEL
+	/* debug builds (make HD_DEBUG_LEVEL=1): <data folder>/level.txt =
+	   "level checkpoint" starts there without the menu */
+	{
+		char path[320];
+		snprintf(path, sizeof path, "%s/level.txt", data_dir);
+		FILE *f = fopen(path, "rb");
+		if (f) {
+			char line[16] = {0};
+			fread(line, 1, sizeof line - 1, f);
+			fclose(f);
+			int v[2] = {0, 0}, n = 0;
+			for (const char *c = line; *c && n < 2; c++) {
+				if (*c >= '0' && *c <= '9') v[n] = v[n] * 10 + (*c - '0');
+				else if (*c == ' ') n++;
+			}
+			hd_game_run(v[0], v[1]);
+			odroid_system_switch_app(0);
+		}
+	}
+#endif
 #ifdef HOST_BUILD
 	/* HD_LEVEL=level[:checkpoint]: start there without the menu */
 	if (getenv("HD_LEVEL")) {

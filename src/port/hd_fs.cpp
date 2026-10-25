@@ -4,7 +4,8 @@
  * Game data comes from the packs (tools/hod_pack.py): setup.hod (SETUP.DAT,
  * HOD.DEM) and one pack per level (rock.hod: ROCK_HOD.LVL/.SSS/.MST), each
  * mapped in memory by the platform (external flash on the console) and
- * read in place. hod.paf (the cutscenes) is streamed from the data folder.
+ * read in place. hod.gwp (the cutscenes, tools/paf_convert.py) is streamed
+ * from the data folder.
  * Saves (setup.cfg) are ordinary files in the save folder.
  */
 #include <ctype.h>
@@ -85,7 +86,7 @@ FileSystem::~FileSystem() {
 
 FILE *FileSystem::openAssetFile(const char *name) {
 	const size_t len = strlen(name);
-	if (len > 4 && strcasecmp(name + len - 4, ".paf") == 0) {
+	if (len > 4 && (strcasecmp(name + len - 4, ".paf") == 0 || strcasecmp(name + len - 4, ".gwp") == 0)) {
 		char path[256];
 		snprintf(path, sizeof(path), "%s/%s", _dataPath, name);
 		FILE *fp = fopen(path, "rb");

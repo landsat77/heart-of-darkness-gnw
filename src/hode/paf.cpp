@@ -8,6 +8,7 @@
 #include "system.h"
 #include "util.h"
 
+#ifndef GNW
 static const char *_filenames[] = {
 	"hod.paf",
 	"hod_demo.paf",
@@ -15,7 +16,9 @@ static const char *_filenames[] = {
 	"hod_oem.paf",
 	0
 };
+#endif
 
+#ifndef GNW
 static bool openPaf(FileSystem *fs, File *f) {
 	for (int i = 0; _filenames[i]; ++i) {
 		FILE *fp = fs->openAssetFile(_filenames[i]);
@@ -33,6 +36,253 @@ static void closePaf(FileSystem *fs, File *f) {
 		f->_fp = 0;
 	}
 }
+#endif
+
+#ifdef GNW
+/*
+ * Game & Watch: the cutscenes come from hod.gwp (tools/paf_convert.py,
+ * made from hod.paf on the PC): per frame, the changes of a 256 x 192
+ * picture and the sound (mono, 22050 Hz). The picture is the engine's
+ * shadow layer (redrawn by the game every frame), the sound goes through a
+ * small ring. No page buffers: the PAF decoder needed ~330 KB.
+ */
+#include "hd_plat.h"
+#include "video.h"
+
+extern uint8_t *hd_cutscene_picture(); /* src/port/hd_game.cpp */
+
+static const char *kGwpName = "hod.gwp";
+static const int kRingSize = 8192; /* mono samples, power of 2 */
+
+static int16_t *_ring;
+static uint32_t _ringRd, _ringWr;
+static int _ringVolume;
+
+struct GwpReader {
+	File *f;
+	uint8_t *buf;
+	int len, pos;
+	uint32_t left; /* bytes of the current frame not read yet */
+
+	int byte() {
+		if (pos >= len) {
+			len = f->read(buf, PafPlayer::kBufferBlockSize);
+			pos = 0;
+			if (len <= 0) {
+				len = 0;
+				return -1;
+			}
+		}
+		--left;
+		return buf[pos++];
+	}
+	uint32_t u16() {
+		const uint32_t a = byte() & 255;
+		return a | (byte() & 255) << 8;
+	}
+	uint32_t u32() {
+		const uint32_t a = u16();
+		return a | u16() << 16;
+	}
+	uint32_t varint() {
+		uint32_t v = 0;
+		for (int shift = 0; shift < 32; shift += 7) {
+			const int b = byte();
+			if (b < 0) {
+				return 0;
+			}
+			v |= (uint32_t)(b & 0x7F) << shift;
+			if (!(b & 0x80)) {
+				break;
+			}
+		}
+		return v;
+	}
+	void bytes(uint8_t *dst, uint32_t n) {
+		while (n) {
+			if (pos >= len) {
+				len = f->read(buf, PafPlayer::kBufferBlockSize);
+				pos = 0;
+				if (len <= 0) {
+					len = 0;
+					memset(dst, 0, n);
+					left = (left > n) ? left - n : 0;
+					return;
+				}
+			}
+			uint32_t k = len - pos;
+			if (k > n) {
+				k = n;
+			}
+			memcpy(dst, buf + pos, k);
+			pos += k;
+			dst += k;
+			n -= k;
+			left -= k;
+		}
+	}
+	void skip(uint32_t n) {
+		while (n--) {
+			byte();
+		}
+	}
+};
+
+PafPlayer::PafPlayer(FileSystem *fs)
+	: _fs(fs) {
+	FILE *fp = _fs->openAssetFile(kGwpName);
+	if (fp) {
+		_file.setFp(fp);
+	} else {
+		_file._fp = 0;
+	}
+	_skipCutscenes = !fp;
+	_videoNum = -1;
+	memset(&_pafHdr, 0, sizeof(_pafHdr));
+	memset(_pageBuffers, 0, sizeof(_pageBuffers));
+	_demuxAudioFrameBlocks = 0;
+	_demuxVideoFrameBlocks = 0;
+	_audioQueue = _audioQueueTail = 0;
+	_playedMask = 0;
+	memset(&_pafCb, 0, sizeof(_pafCb));
+	_volume = 128;
+	_frameMs = kFrameDuration;
+}
+
+PafPlayer::~PafPlayer() {
+	if (_file._fp) {
+		_fs->closeFile(_file._fp);
+		_file._fp = 0;
+	}
+}
+
+void PafPlayer::setVolume(int volume) {
+	_volume = volume;
+}
+
+void PafPlayer::preload(int num) {
+	if (num >= 0 && num < kMaxVideosCount) {
+		_videoNum = num;
+	}
+}
+
+void PafPlayer::unload(int num) {
+	_videoNum = -1;
+}
+
+static void gwpMix(void *userdata, int16_t *buf, int len) {
+	for (int i = 0; i + 1 < len; i += 2) {
+		int s = 0;
+		if (_ringRd != _ringWr) {
+			s = (_ring[_ringRd & (kRingSize - 1)] * _ringVolume + 64) >> 7;
+			++_ringRd;
+			if (s > 32767) s = 32767;
+			if (s < -32768) s = -32768;
+		}
+		buf[i] = buf[i + 1] = s;
+	}
+}
+
+void PafPlayer::play(int num) {
+	if (_skipCutscenes || num < 0 || num >= kMaxVideosCount) {
+		return;
+	}
+	_file.seek(12 + num * 4, SEEK_SET);
+	const uint32_t offset = _file.readUint32();
+	if (offset == 0) {
+		return;
+	}
+	_playedMask |= 1 << num;
+	_file.seek(offset, SEEK_SET);
+	GwpReader r;
+	r.f = &_file;
+	r.buf = _bufferBlock;
+	r.len = r.pos = 0;
+	r.left = 16;
+	const uint32_t frameMs = r.u32();
+	const uint32_t framesCount = r.u32();
+	r.u32();
+	r.u32();
+
+	uint8_t *picture = hd_cutscene_picture();
+	memset(picture, 0, Video::W * Video::H);
+	memset(_paletteBuffer, 0, sizeof(_paletteBuffer));
+	g_system->setPalette(_paletteBuffer, 256, 6);
+
+	_ring = (int16_t *)malloc(kRingSize * sizeof(int16_t));
+	_ringRd = _ringWr = 0;
+	_ringVolume = _volume;
+	AudioCallback prevAudioCb;
+	if (_ring) {
+		AudioCallback audioCb;
+		audioCb.proc = gwpMix;
+		audioCb.userdata = this;
+		prevAudioCb = g_system->setAudioCallback(audioCb);
+	}
+
+	uint32_t frameTime = g_system->getTimeStamp() + frameMs;
+	for (uint32_t i = 0; i < framesCount; ++i) {
+		r.left = 4;
+		r.left = r.u32();
+		const int flags = r.byte();
+		if (flags < 0) {
+			break;
+		}
+		if (flags & 1) {
+			r.bytes(_paletteBuffer, sizeof(_paletteBuffer));
+		}
+		uint32_t samples = r.u16();
+		while (samples--) {
+			const int16_t s = (int16_t)r.u16();
+			if (_ring && _ringWr - _ringRd < (uint32_t)kRingSize) {
+				_ring[_ringWr & (kRingSize - 1)] = s;
+				++_ringWr;
+			}
+		}
+		if (flags & 2) {
+			uint32_t pos = 0;
+			while (r.left > 0 && pos < (uint32_t)(Video::W * Video::H)) {
+				pos += r.varint();
+				uint32_t n = r.varint();
+				if (pos + n > (uint32_t)(Video::W * Video::H)) {
+					n = Video::W * Video::H - pos;
+				}
+				r.bytes(picture + pos, n);
+				pos += n;
+			}
+		}
+		r.skip(r.left);
+
+		if (_pafCb.frameProc) {
+			_pafCb.frameProc(_pafCb.userdata, i, picture);
+		} else {
+			g_system->copyRect(0, 0, kVideoWidth, kVideoHeight, picture, kVideoWidth);
+		}
+		if (flags & 1) {
+			g_system->setPalette(_paletteBuffer, 256, 6);
+		}
+		g_system->updateScreen(false);
+		g_system->processEvents();
+		if (g_system->inp.keyPressed(SYS_INP_ESC) || g_system->inp.skip) {
+			break;
+		}
+		const int delay = MAX<int>(10, frameTime - g_system->getTimeStamp());
+		g_system->sleep(delay);
+		frameTime = g_system->getTimeStamp() + frameMs;
+	}
+
+	if (_pafCb.endProc) {
+		_pafCb.endProc(_pafCb.userdata);
+	}
+	if (_ring) {
+		g_system->setAudioCallback(prevAudioCb);
+		free(_ring);
+		_ring = 0;
+	}
+	_videoNum = -1;
+}
+
+#else
 
 PafPlayer::PafPlayer(FileSystem *fs)
 	: _fs(fs) {
@@ -545,6 +795,8 @@ void PafPlayer::mainLoop() {
 
 	unload();
 }
+
+#endif /* GNW */
 
 void PafPlayer::setCallback(const PafCallback *pafCb) {
 	if (pafCb) {

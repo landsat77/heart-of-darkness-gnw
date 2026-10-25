@@ -1,7 +1,8 @@
 /*
- * hode's System (system.h) on the Game & Watch: an 8-bit 256 x 192 canvas
- * shown by the platform (hd_plat.h); time = sound played; sleep() runs
- * audio periods.
+ * hode's System (system.h) on the Game & Watch: the picture is the
+ * engine's own 256 x 192 8-bit buffer (every copyRect() is the whole
+ * screen: no canvas, 48 KB saved), shown by the platform (hd_plat.h);
+ * time = sound played; sleep() runs audio periods.
  */
 #include <stdio.h>
 #include <string.h>
@@ -10,13 +11,15 @@
 #include "hd_plat.h"
 
 struct System_GNW : System {
-	uint8_t _canvas[HD_W * HD_H];
+	const uint8_t *_screen;	/* last copyRect() */
+	int _pitch;		/* 0: _fill (fillRect()) */
+	uint8_t _fill[HD_W];
 	uint8_t _pal[256 * 3];
 	int _shakeDx, _shakeDy;
 	AudioCallback _audio;
 
-	System_GNW() : _shakeDx(0), _shakeDy(0) {
-		memset(_canvas, 0, sizeof(_canvas));
+	System_GNW() : _screen(_fill), _pitch(0), _shakeDx(0), _shakeDy(0) {
+		memset(_fill, 0, sizeof(_fill));
 		memset(_pal, 0, sizeof(_pal));
 		_audio.proc = 0;
 		_audio.userdata = 0;
@@ -39,17 +42,22 @@ struct System_GNW : System {
 		memset(_pal, 0, sizeof(_pal));
 	}
 	virtual void copyRect(int x, int y, int w, int h, const uint8_t *buf, int pitch) {
-		for (int j = 0; j < h; ++j) {
-			if (y + j < 0 || y + j >= HD_H) continue;
-			memcpy(_canvas + (y + j) * HD_W + x, buf + j * pitch, w);
+		if (x != 0 || y != 0 || w != HD_W || h != HD_H) {
+			hd_plat_log("copyRect: not the whole screen (ignored)");
+			return;
 		}
+		_screen = buf;
+		_pitch = pitch;
 	}
 	virtual void copyYuv(int w, int h, const uint8_t *y, int ypitch, const uint8_t *u, int upitch, const uint8_t *v, int vpitch) {}
 	virtual void fillRect(int x, int y, int w, int h, uint8_t color) {
-		for (int j = 0; j < h; ++j) {
-			if (y + j < 0 || y + j >= HD_H) continue;
-			memset(_canvas + (y + j) * HD_W + x, color, w);
+		if (x != 0 || y != 0 || w != HD_W || h != HD_H) {
+			hd_plat_log("fillRect: not the whole screen (ignored)");
+			return;
 		}
+		memset(_fill, color, sizeof(_fill));
+		_screen = _fill;
+		_pitch = 0;
 	}
 	virtual void copyRectWidescreen(int w, int h, const uint8_t *buf, const uint8_t *pal) {}
 	virtual void shakeScreen(int dx, int dy) {
@@ -57,7 +65,7 @@ struct System_GNW : System {
 		_shakeDy = dy;
 	}
 	virtual void updateScreen(bool drawWidescreen) {
-		hd_plat_present(_canvas, _pal, _shakeDx, _shakeDy);
+		hd_plat_present(_screen, _pitch, _pal, _shakeDx, _shakeDy);
 	}
 	virtual void processEvents() {
 		pad.prevMask = pad.mask;

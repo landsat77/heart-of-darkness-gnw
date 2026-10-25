@@ -694,6 +694,26 @@ void Resource::loadLvlData(File *fp) {
 	}
 
 	loadLvlScreenMaskData();
+#if defined(GNW) && defined(HOST_BUILD)
+	/* HD_SHADOWSTAT: the decoded size of each screen's shadow masks */
+	if (getenv("HD_SHADOWSTAT")) {
+		static uint8_t tmp[256 * 192 * 2 + 1024];
+		int worst = 0;
+		for (int num = 0; num < _lvlHdr.screensCount; ++num) {
+			const bool loaded = isLvlBackgroundDataLoaded(num);
+			if (!loaded) loadLvlScreenBackgroundData(num);
+			LvlBackgroundData *dat = &_resLvlScreenBackgroundDataTable[num];
+			int total = 0;
+			for (int i = 0; i < dat->shadowCount; ++i) {
+				if (dat->backgroundMaskTable[i]) total += decodeLZW(dat->backgroundMaskTable[i] + 2, tmp);
+			}
+			if (total) fprintf(stderr, "shadow: screen %d: %d masks, %d bytes\n", num, dat->shadowCount, total);
+			if (total > worst) worst = total;
+			if (!loaded) unloadLvlScreenBackgroundData(num);
+		}
+		fprintf(stderr, "shadow: worst %d bytes\n", worst);
+	}
+#endif
 
 	memset(_resLevelData0x2988SizeTable, 0, sizeof(_resLevelData0x2988SizeTable));
 	memset(_resLevelData0x2988PtrTable, 0, sizeof(_resLevelData0x2988PtrTable));

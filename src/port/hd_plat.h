@@ -31,9 +31,12 @@ const uint8_t *hd_plat_pack(const char *name, uint32_t *size);
 const char *hd_plat_data_dir(void);
 const char *hd_plat_save_dir(void);
 
-/* The game's picture: 256 x 192, 8-bit, palette 256 x RGB (8 bits), moved
-   by (dx, dy) when the screen shakes. Shown at the next service. */
-void hd_plat_present(const uint8_t *pixels, const uint8_t *palette, int dx, int dy);
+/* The game's picture: 256 x 192, 8-bit (pitch bytes per line, 0: the same
+   line repeated), palette 256 x RGB (8 bits), moved by (dx, dy) when the
+   screen shakes. Shown now (after the previous swap). The pixels are the
+   engine's buffer: they must stay as they are until the next present
+   (they are drawn again behind the pause menu). */
+void hd_plat_present(const uint8_t *pixels, int pitch, const uint8_t *palette, int dx, int dy);
 
 /* Buttons held (HD_*), read at the last service. */
 unsigned hd_plat_buttons(void);
