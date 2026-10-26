@@ -1,5 +1,8 @@
 # Heart of Darkness for Game & Watch Retro-Go SD
 
+<img width="2160" height="2880" alt="image" src="https://github.com/user-attachments/assets/203ba509-c4bd-4b43-866f-3abadc9582d9" />
+
+
 **Heart of Darkness** (Amazing Studio, 1998) on the Nintendo Game & Watch
 (Zelda or Mario) with the
 [Retro-Go SD](https://github.com/sylverb/game-and-watch-retro-go-sd)
