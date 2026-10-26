@@ -32,21 +32,33 @@ SDK. The second part of this file is the SDK's generic porting guide.
   canvas: `System_GNW::copyRect` keeps the engine's buffer pointer (every
   copyRect is the whole screen). Measured in gwemu (debug build, make
   HD_DEBUG_LEVEL=1 + `level.txt` in the data folder): heap 866 KB (739
-  before ITCM/AHB were added), level peaks rock 571, fort 513, pwr1 698 (the worst: shadow
-  masks 98.5 KB + transform layer 49 KB), isld 583, lava 614, pwr2 607 KB.
+  before ITCM/AHB were added), level peaks rock 571, fort 513, pwr1 698
+  (the worst: shadow masks 98.5 KB + transform layer 49 KB), isld 583,
+  lava 614, pwr2 607, lar1 682, lar2 600, dark 444 KB; a cutscene adds
+  16 KB. Out of memory in the engine = fatal message
+  (`hd_engine_malloc`), not a crash.
   The PC build's numbers are ~50 KB higher (64-bit pointers).
 - Cutscenes: the PAF player needs ~330 KB (4 pages + demux), impossible
   inside a level (most cutscenes are). `tools/paf_convert.py` decodes
   hod.paf on the PC (same algorithm as paf.cpp) into hod.gwp: per frame a
   delta of the 256x192 picture + mono 22050 Hz sound (150 ms lead); the
   GNW PafPlayer (paf.cpp) streams it into the shadow layer
-  (`hd_cutscene_picture()`) with a 16 KB sound ring.
+  (`hd_cutscene_picture()`) with a 16 KB sound ring, on a fixed schedule
+  (frameTime += frameMs), calling `hd_plat_poll()` between 2 KB reads so
+  the sound DMA is fed during long SD reads. Decoder checked frame by frame
+  (21330 frames, CRC) against hode's C++ PafPlayer; hod.paf (429 MB,
+  v1.1 CD) -> hod.gwp 752 MB, 175-512 KB/s at 10 fps (SD reads measured
+  1.3-1.9 MB/s on the console). Python conversion ~4 min.
 - Timing: the game's clock is the sound played (`hd_plat_time_ms`, 441
   samples per 20 ms period); `System::sleep` runs `hd_plat_service`
   (buttons + pause menu, audio period, wdog). 12.5 fps (80 ms frames).
 - Save states: level + checkpoint + difficulty/volume/cutscenes seen
   (`hd_game_get_state/set_state`): loading ends the level (`_endLevel`)
-  and restarts at the checkpoint (as the game does after a death).
+  and restarts at the checkpoint (as the game does after a death). The
+  game never restarts the level it is in: `clearDeclaredLvlObjectsList`
+  (GNW) clears the pointers into the object list (`_plasmaExplosionObject`
+  etc.), else Rock crashed. "Resume game" in the launcher starts at the
+  state's checkpoint without the menu or the level intro.
 - PC build: `make host`; `./HeartOfDarkness_host <dir>/HeartOfDarkness.bin`
   (the packs in `<dir>/HeartOfDarkness/`). Tests: `HD_TICKS`, `HD_SCRIPT`
   ("tick:UDLRABTG,..."), `HD_SHOTS`/`HD_SHOT_AT`, `HD_LEVEL=l[:c]`,
