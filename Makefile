@@ -169,7 +169,16 @@ pack: $(TARGET_BIN) $(COVER_JPG)
 
 endif
 
-all: pack
+# The SD card's files: build/sd/homebrews/HeartOfDarkness.bin (the packs
+# are made by the player from his CD: tools/hod_pack.py)
+SD_DIR := build/sd/homebrews
+.PHONY: sd
+sd: pack
+	$(V)mkdir -p $(SD_DIR)
+	$(V)cp $(PACKED_BIN) $(SD_DIR)/
+	$(V)$(ECHO) "[ SD ] $(SD_DIR)/$(PACKED_BIN)"
+
+all: pack sd
 
 # Read-only helpers for CI / scripts (make print-PROJECT_KIND, etc.).
 .PHONY: print-PROJECT_KIND print-PACKED_BIN print-CORE_NAME print-DOCKER_IMAGE \
