@@ -1,6 +1,6 @@
 # Changelog
 
-## [v1.0.0] - unreleased
+## [v1.0.0] - 2026-10-26
 
 - First version: Heart of Darkness (hode) as a Retro-Go SD homebrew.
 - Packs made from the player's CD (`tools/hod_pack.py`), read in place
