@@ -12,8 +12,8 @@ included).
 
        python tools/hod_pack.py <game folder> <SD>/homebrews/HeartOfDarkness --paf <CD>/paf/hod.paf
 
-   About 82 MB of packs, plus the cutscenes (`hod.gwp`, converted in a
-   few minutes). Without `--paf` (and no `hod.paf` in the game folder)
+   About 82 MB of packs, plus the cutscenes (`hod.gwp`, about 750 MB,
+   converted in 4 to 10 minutes): the card needs about 850 MB free. Without `--paf` (and no `hod.paf` in the game folder)
    the game runs without cutscenes.
 
 3. Copy the zip's `homebrews` folder to the SD card's root:
@@ -48,8 +48,9 @@ ne sont pas fournies).
 
        python tools/hod_pack.py <dossier du jeu> <SD>/homebrews/HeartOfDarkness --paf <CD>/paf/hod.paf
 
-   Environ 82 Mo de packs, plus les cinématiques (`hod.gwp`, converties
-   en quelques minutes). Sans `--paf` (et sans `hod.paf` dans le dossier
+   Environ 82 Mo de packs, plus les cinématiques (`hod.gwp`, environ
+   750 Mo, converties en 4 à 10 minutes) : il faut environ 850 Mo libres
+   sur la carte. Sans `--paf` (et sans `hod.paf` dans le dossier
    du jeu), le jeu tourne sans cinématiques.
 
 3. Copier le dossier `homebrews` du zip à la racine de la carte SD :

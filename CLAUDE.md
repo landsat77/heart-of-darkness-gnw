@@ -31,8 +31,8 @@ SDK. The second part of this file is the SDK's generic porting guide.
   co are mapped by `hd_glue.h` (-include), new/delete in `hd_cxx.cpp`. No
   canvas: `System_GNW::copyRect` keeps the engine's buffer pointer (every
   copyRect is the whole screen). Measured in gwemu (debug build, make
-  HD_DEBUG_LEVEL=1 + `level.txt` in the data folder): heap 739 KB before
-  ITCM/AHB, level peaks rock 571, fort 513, pwr1 698 (the worst: shadow
+  HD_DEBUG_LEVEL=1 + `level.txt` in the data folder): heap 866 KB (739
+  before ITCM/AHB were added), level peaks rock 571, fort 513, pwr1 698 (the worst: shadow
   masks 98.5 KB + transform layer 49 KB), isld 583, lava 614, pwr2 607 KB.
   The PC build's numbers are ~50 KB higher (64-bit pointers).
 - Cutscenes: the PAF player needs ~330 KB (4 pages + demux), impossible

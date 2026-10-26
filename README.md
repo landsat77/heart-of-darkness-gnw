@@ -34,7 +34,8 @@ Python 3 on your PC.
    python hod_pack.py <game folder> <SD card>/homebrews/HeartOfDarkness --paf <CD>/paf/hod.paf
    ```
    This writes about 82 MB of level packs and converts the cutscenes
-   (`hod.gwp`, a few minutes).
+   (`hod.gwp`, about 750 MB, 4 to 10 minutes): the card needs about
+   850 MB free.
 4. Copy the zip's `homebrews` folder to the SD card's root:
    ```
    /homebrews/HeartOfDarkness.bin          the homebrew (Homebrew tab)
