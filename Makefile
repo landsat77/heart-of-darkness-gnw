@@ -35,6 +35,11 @@ src/port/hd_main.c
 
 CORE_C_INCLUDES := -Isrc/port -Isrc/hode
 
+# Save states (src/port/hd_main.c): the engine's variables (hode, the port's
+# files, System, heap) go to the hdstate_* sections, kept together by
+# src/port/hd_core.ld (a copy of the SDK's script).
+CORE_LDSCRIPT := src/port/hd_core.ld
+
 # Relative path so Docker bind-mounts work (do NOT use $(abspath) — it
 # bakes the host path into Make prerequisites / .d files). Do not name
 # this SDK_ROOT: that env var is commonly set by Android SDK installs.
@@ -117,6 +122,12 @@ CXX_OBJECTS := $(filter-out $(BUILD_DIR)/gw_core_cxx_support.o,$(CXX_OBJECTS))
 HD_CXX_OBJECTS := $(addprefix $(BUILD_DIR)/,$(notdir $(HD_CXX_SOURCES:.cpp=.o)))
 $(HD_CXX_OBJECTS): CXXFLAGS += -include src/port/hd_glue.h -Wno-unused-parameter -Wno-class-memaccess \
 	-Wno-unused-variable -Wno-unused-but-set-variable -Wno-unused-function
+HD_STATE_OBJECTS := $(HD_CXX_OBJECTS) $(BUILD_DIR)/hd_heap.o
+HD_STATE_RENAME := --rename-section .data=hdstate_data --rename-section .bss=hdstate_bss \
+	--rename-section .data.rel=hdstate_data --rename-section .data.rel.local=hdstate_data
+$(HD_STATE_OBJECTS): CFLAGS += -fno-data-sections
+$(HD_STATE_OBJECTS): CXXFLAGS += -fno-data-sections
+$(HD_STATE_OBJECTS): CP = $(PREFIX)objcopy $(HD_STATE_RENAME)
 
 #######################################
 # Packed header version

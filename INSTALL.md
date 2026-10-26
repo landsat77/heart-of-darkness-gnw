@@ -27,7 +27,7 @@ included).
 
 Controls: D-pad = move, A = jump, B = shoot, TIME or SELECT (held) =
 run / special power, GAME or START = game menu / skip a cutscene,
-PAUSE/SET = Retro-Go menu (save states). The game saves its progress at
+PAUSE/SET = Retro-Go menu (save states: the exact moment). The game saves its progress at
 each checkpoint (`/retro-go/saves/hode/`).
 
 ---

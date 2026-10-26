@@ -52,9 +52,23 @@ SDK. The second part of this file is the SDK's generic porting guide.
 - Timing: the game's clock is the sound played (`hd_plat_time_ms`, 441
   samples per 20 ms period); `System::sleep` runs `hd_plat_service`
   (buttons + pause menu, audio period, wdog). 12.5 fps (80 ms frames).
-- Save states: level + checkpoint + difficulty/volume/cutscenes seen
-  (`hd_game_get_state/set_state`): loading ends the level (`_endLevel`)
-  and restarts at the checkpoint (as the game does after a death). The
+- Save states (hd_main.c, format "HODS" v2): EXACT when taken between two
+  frames of a level (`hd_safe_point`, set around the sleep of
+  `Game::gnwLevelLoop()`): header + the engine's variables (objects of
+  HD_STATE_OBJECTS compiled -fno-data-sections, .data/.bss renamed
+  hdstate_data/hdstate_bss by objcopy, kept together by
+  `src/port/hd_core.ld`) + the heap (`hd_heap_save/load`: every block
+  header, used blocks' bytes; ~700 KB). Needs the same build (`build_id`),
+  heap regions (`hd_heap_signature`) and the setup + level packs at the
+  same flash addresses. LoadState() only checks and sets `restore_pending`;
+  the restore runs from our code (next service, or app_main at boot for
+  "Resume game"): close real files (hd_fs), read memory, reopen hod.gwp,
+  longjmp to app_main -> `hd_game_continue()` (the game sequence's
+  variables are statics in hd_game.cpp, part of the state). Verified on
+  the PC: frames after a load identical to those after the save.
+  Otherwise (cutscene, menus, mismatch): level + checkpoint +
+  difficulty/volume/cutscenes seen (`hd_game_get_state/set_state`): loading
+  ends the level (`_endLevel`) and restarts at the checkpoint. The
   game never restarts the level it is in: `clearDeclaredLvlObjectsList`
   (GNW) clears the pointers into the object list (`_plasmaExplosionObject`
   etc.), else Rock crashed. "Resume game" in the launcher starts at the

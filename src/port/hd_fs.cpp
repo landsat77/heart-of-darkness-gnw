@@ -15,6 +15,7 @@
 
 #include "fs.h"
 #include "hd_plat.h"
+#include "hd_fs.h"
 
 static const int kMaxAssets = 8;
 static AssetFile assets[kMaxAssets];
@@ -64,6 +65,7 @@ static FILE *new_asset(const uint8_t *data, uint32_t size, FILE *fp, bool sector
 			assets[i].pos = 0;
 			assets[i].fp = fp;
 			assets[i].sectored = sectored;
+			assets[i].name[0] = 0;
 			return (FILE *)&assets[i];
 		}
 	}
@@ -92,7 +94,11 @@ FILE *FileSystem::openAssetFile(const char *name) {
 		FILE *fp = fopen(path, "rb");
 		if (!fp) return 0;
 		FILE *a = new_asset(0, 0, fp);
-		if (!a) fclose(fp);
+		if (!a) {
+			fclose(fp);
+		} else {
+			snprintf(((AssetFile *)a)->name, sizeof(((AssetFile *)a)->name), "%s", name);
+		}
 		return a;
 	}
 	char group[16];
@@ -137,4 +143,29 @@ void FileSystem::addFilePath(const char *path) {
 
 void FileSystem::listFiles(const char *dir) {
 	(void)dir;
+}
+
+/* Save states (src/port/hd_main.c): the table of handles is part of the
+   state, the real files (hod.gwp) are not. Before a load: close them; after:
+   open them again (the cutscene player seeks before reading). */
+extern "C" void hd_fs_close_files() {
+	for (int i = 0; i < kMaxAssets; ++i) {
+		if (used[i] && assets[i].fp) {
+			fclose(assets[i].fp);
+			assets[i].fp = 0;
+		}
+	}
+}
+
+extern "C" void hd_fs_reopen_files() {
+	for (int i = 0; i < kMaxAssets; ++i) {
+		if (used[i] && !assets[i].data && assets[i].name[0]) {
+			char path[256];
+			snprintf(path, sizeof(path), "%s/%s", hd_plat_data_dir(), assets[i].name);
+			assets[i].fp = fopen(path, "rb");
+			if (!assets[i].fp) {
+				hd_plat_fatal("save state: a data file cannot be opened again");
+			}
+		}
+	}
 }

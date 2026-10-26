@@ -85,57 +85,87 @@ static bool takePending(Game *g, int *level, int *checkpoint) {
 	return true;
 }
 
-extern "C" void hd_game_run(int level, int checkpoint) {
-	const bool resume = level < 0; // from setup.cfg, with the menu
-	if (level < 0) {
-		level = 0;
-		checkpoint = 0;
-	}
-	g_debugMask = 0;
-	Game *g = new Game(hd_plat_data_dir(), hd_plat_save_dir(), 0);
-	hd_game = g;
-	g->_res->loadSetupDat();
-	g_system->init("Heart of Darkness", Video::W, Video::H, false, false, false);
-	g->_mix._lock = lockAudio;
-	AudioCallback cb;
-	cb.proc = mixAudio;
-	cb.userdata = g;
-	g_system->startAudio(cb);
-	g->displayLoadingScreen();
-	started = true;
+/* Where the game is (statics: part of a save state, src/port/hd_main.c) */
+static bool sResume;		/* from setup.cfg, with the menu */
+static int sLevel, sCheckpoint;
+static bool sLevelChanged;
+
+/* The menu and the levels until the player quits. inLevelNow: a save state
+   was just loaded, the level being played goes on (Game::gnwLevelLoop()). */
+static void play(Game *g, bool inLevelNow) {
 	do {
-		g->loadSetupCfg(resume);
-		bool levelChanged = false;
-		if (takePending(g, &level, &checkpoint)) {
-			levelChanged = true; /* no level intro */
-		} else if (resume) {
-			Menu *m = new Menu(g, g->_paf, g->_res, g->_video);
-			const bool runGame = m->mainLoop();
-			delete m;
-			if (!runGame) {
-				break;
+		if (!inLevelNow) {
+			g->loadSetupCfg(sResume);
+			sLevelChanged = false;
+			if (takePending(g, &sLevel, &sCheckpoint)) {
+				sLevelChanged = true; /* no level intro */
+			} else if (sResume) {
+				Menu *m = new Menu(g, g->_paf, g->_res, g->_video);
+				const bool runGame = m->mainLoop();
+				delete m;
+				if (!runGame) {
+					break;
+				}
 			}
 		}
-		while (!g_system->inp.quit && level < kLvl_test) {
-			g->displayLoadingScreen();
+		while (!g_system->inp.quit && sLevel < kLvl_test) {
 			inLevel = true;
-			g->mainLoop(level, checkpoint, levelChanged);
+			if (inLevelNow) {
+				inLevelNow = false;
+				g->gnwLevelLoop();
+			} else {
+				g->displayLoadingScreen();
+				g->mainLoop(sLevel, sCheckpoint, sLevelChanged);
+			}
 			inLevel = false;
-			if (resume) {
+			if (sResume) {
 				g->saveSetupCfg();
 			}
-			if (takePending(g, &level, &checkpoint)) {
-				levelChanged = true;
+			if (takePending(g, &sLevel, &sCheckpoint)) {
+				sLevelChanged = true;
 				continue;
 			}
 			if (g->_res->_isDemo) {
 				break;
 			}
-			level = g->_currentLevel + 1;
-			checkpoint = 0;
-			levelChanged = true;
+			sLevel = g->_currentLevel + 1;
+			sCheckpoint = 0;
+			sLevelChanged = true;
 		}
-		level = 0;
-	} while (!g_system->inp.quit && resume);
+		sLevel = 0;
+	} while (!g_system->inp.quit && sResume);
 	g_system->stopAudio();
+}
+
+static void startAudio(Game *g) {
+	g->_mix._lock = lockAudio;
+	AudioCallback cb;
+	cb.proc = mixAudio;
+	cb.userdata = g;
+	g_system->startAudio(cb);
+}
+
+extern "C" void hd_game_run(int level, int checkpoint) {
+	sResume = level < 0;
+	sLevel = level < 0 ? 0 : level;
+	sCheckpoint = level < 0 ? 0 : checkpoint;
+	g_debugMask = 0;
+	Game *g = new Game(hd_plat_data_dir(), hd_plat_save_dir(), 0);
+	hd_game = g;
+	g->_res->loadSetupDat();
+	g_system->init("Heart of Darkness", Video::W, Video::H, false, false, false);
+	startAudio(g);
+	g->displayLoadingScreen();
+	started = true;
+	play(g, false);
+}
+
+extern "C" void hd_game_continue(void) {
+	Game *g = hd_game;
+	startAudio(g);
+	play(g, true);
+}
+
+extern "C" int hd_game_in_level(void) {
+	return inLevel && hd_game && hd_game->_level;
 }

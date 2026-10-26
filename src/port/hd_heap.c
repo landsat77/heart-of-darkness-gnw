@@ -184,6 +184,55 @@ char *hd_strdup(const char *s)
 	return p;
 }
 
+/* --- save states (src/port/hd_main.c) --- */
+
+uint32_t hd_heap_signature(void)
+{
+	uint32_t h = 2166136261u;
+	for (int i = 0; i < region_count; i++) {
+		uintptr_t v[2] = { (uintptr_t)regions[i].start, (uintptr_t)regions[i].end };
+		const uint8_t *p = (const uint8_t *)v;
+		for (size_t k = 0; k < sizeof v; k++) h = (h ^ p[k]) * 16777619u;
+	}
+	return h ^ (uint32_t)region_count;
+}
+
+/* Every block's header, and the bytes of the used ones (the free ones are
+   left as they are): the layout is the same after a load. */
+int hd_heap_save(int (*write)(const void *, size_t, void *), void *ctx)
+{
+	for (int i = 0; i < region_count; i++) {
+		block_t *b = (block_t *)regions[i].start;
+		for (;;) {
+			if (write(b, HDR, ctx)) return -1;
+			if ((uint8_t *)b >= regions[i].end) break; /* the sentinel */
+			if (b->size & USED) {
+				if (write((uint8_t *)b + HDR, bsize(b) - HDR, ctx)) return -1;
+			}
+			b = next_block(b);
+		}
+	}
+	return 0;
+}
+
+int hd_heap_load(int (*read)(void *, size_t, void *), void *ctx)
+{
+	for (int i = 0; i < region_count; i++) {
+		block_t *b = (block_t *)regions[i].start;
+		for (;;) {
+			if (read(b, HDR, ctx)) return -1;
+			if ((uint8_t *)b >= regions[i].end) break;
+			const size_t s = bsize(b);
+			if (s < HDR || (uint8_t *)b + s > regions[i].end) return -1;
+			if (b->size & USED) {
+				if (read((uint8_t *)b + HDR, s - HDR, ctx)) return -1;
+			}
+			b = next_block(b);
+		}
+	}
+	return 0;
+}
+
 size_t hd_heap_used(void) { return used_bytes; }
 size_t hd_heap_peak(void) { return peak_bytes; }
 size_t hd_heap_total(void) { return total_bytes; }

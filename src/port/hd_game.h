@@ -18,6 +18,9 @@ typedef struct {
 	unsigned cutscenes;	/* cutscenes already seen */
 } hd_state_t;
 int hd_game_get_state(hd_state_t *state);
+/* After an exact save state was loaded (memory restored): the level goes on */
+void hd_game_continue(void);
+int hd_game_in_level(void);
 int hd_game_set_state(const hd_state_t *state);
 
 #ifdef __cplusplus

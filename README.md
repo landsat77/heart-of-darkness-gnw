@@ -64,8 +64,12 @@ See [INSTALL.md](INSTALL.md) (English and French).
 | PAUSE/SET | Retro-Go menu (save states, volume…) |
 
 Progress is saved by the game itself at each checkpoint
-(`/retro-go/saves/hode/setup.cfg`). Save states record the level and the
-last checkpoint: loading one restarts there, as after a death.
+(`/retro-go/saves/hode/setup.cfg`). Save states (Retro-Go menu, also
+"Resume game" in the launcher) bring back the exact moment of the save
+(about 700 KB per state: one or two seconds to write). A state saved during
+a cutscene or a menu, or one the console cannot restore exactly (another
+version of the homebrew, packs moved in the external flash), restarts at
+its level's last checkpoint.
 
 ## How it works
 

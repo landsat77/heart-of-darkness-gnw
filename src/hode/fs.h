@@ -14,6 +14,7 @@ struct AssetFile {
 	uint32_t size, pos;
 	FILE *fp;
 	bool sectored;		/* v1.2 data, sector checksums removed */
+	char name[16];		/* real files: reopened after a save state load */
 };
 #endif
 

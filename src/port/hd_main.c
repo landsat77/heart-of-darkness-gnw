@@ -15,6 +15,7 @@
 #include <stdbool.h>
 #include <string.h>
 #include <stdio.h>
+#include <setjmp.h>
 
 #include "common.h"
 #include "gw_lcd.h"
@@ -38,6 +39,7 @@
 #include "hd_plat.h"
 #include "hd_heap.h"
 #include "hd_game.h"
+#include "hd_fs.h"
 
 #define APP_ID APPID_HOMEBREW
 #define AUDIO_PERIOD (HD_SAMPLE_RATE / 50)	/* 441 samples, 20 ms */
@@ -106,6 +108,8 @@ const char *hd_plat_save_dir(void) { return save_dir; }
 
 /* --- picture --- */
 
+static bool restore_pending;	/* an exact save state to restore (below) */
+static void restore_and_jump(void);
 static unsigned stat_frames;	/* game frames presented (log every 5 s) */
 static const uint8_t *frame_pixels;
 static int frame_pitch;
@@ -343,6 +347,7 @@ void hd_plat_service(void)
 {
 	wdog_refresh();
 	read_buttons();
+	if (restore_pending) restore_and_jump(); /* loaded from the pause menu */
 #ifdef HOST_BUILD
 	test_step();
 #endif
@@ -435,25 +440,108 @@ void hd_plat_fatal(const char *message)
 
 /* --- system callbacks --- */
 
-/* Save states: the level and checkpoint (hd_game.h), restarted on load.
-   File: "HODS", u32 version 1, then hd_state_t's fields as u32. */
+/*
+ * Save states.
+ *
+ * Exact states: taken between two frames of a level (hd_safe_point, set by
+ * Game::gnwLevelLoop() around its sleep), they hold the engine's variables
+ * (the hdstate_* sections: hode, hd_fs, hd_system, hd_game, hd_heap) and
+ * the heap (every block's header, the used blocks' bytes). They need the
+ * same build, the same heap regions and the packs at the same addresses in
+ * the external flash (pointers into them): else, and for states taken
+ * elsewhere (cutscene, menus), the state restarts at its checkpoint (the
+ * level, checkpoint, difficulty... are always in the header).
+ *
+ * A load is done from our own code, never from the firmware's menu: the
+ * menu's LoadState() checks the file and leaves it pending; the next
+ * service (or app_main at boot, "Resume game") restores the memory and
+ * jumps to app_main (hd_top), which goes on with the level
+ * (hd_game_continue()).
+ */
 #define STATE_MAGIC "HODS"
-#define STATE_WORDS 5
+#define STATE_VERSION 2
+#define STATE_PACKS 2
 
-static bool LoadState(const char *path)
+extern uint8_t __start_hdstate_data[], __stop_hdstate_data[];
+extern uint8_t __start_hdstate_bss[], __stop_hdstate_bss[];
+
+int hd_safe_point; /* Game::gnwLevelLoop(): between two frames */
+
+typedef struct {
+	char magic[4];
+	uint32_t version;
+	uint32_t level, checkpoint, difficulty, volume, cutscenes;
+	uint32_t exact;
+	uint32_t build, heap_sig, data_size, bss_size;
+	struct {
+		char name[8];
+		uint64_t addr;
+		uint32_t size, pad;
+	} packs[STATE_PACKS];
+} state_hdr_t;
+
+static const char *const level_packs[] = { "rock", "fort", "pwr1", "isld", "lava", "pwr2", "lar1", "lar2", "dark" };
+
+static jmp_buf hd_top;
+static char restore_path[256];
+
+static uint32_t build_id(void)
+{
+	return (uint32_t)(uintptr_t)&hd_game_continue ^ (uint32_t)(uintptr_t)&hd_game_run * 31u ^
+	       (uint32_t)(__stop_hdstate_data - __start_hdstate_data) * 131u ^
+	       (uint32_t)(__stop_hdstate_bss - __start_hdstate_bss) * 8191u;
+}
+
+static int file_write(const void *p, size_t n, void *ctx) { return fwrite(p, 1, n, (FILE *)ctx) != n; }
+static int file_read(void *p, size_t n, void *ctx) { return fread(p, 1, n, (FILE *)ctx) != n; }
+
+static bool read_header(const char *path, state_hdr_t *h)
 {
 	FILE *f = fopen(path, "rb");
 	if (!f) return false;
-	uint8_t buf[8 + 4 * STATE_WORDS];
-	size_t n = fread(buf, 1, sizeof buf, f);
+	memset(h, 0, sizeof *h);
+	size_t n = fread(h, 1, sizeof *h, f);
 	fclose(f);
-	if (n != sizeof buf || memcmp(buf, STATE_MAGIC, 4) != 0 || buf[4] != 1) return false;
-	uint32_t w[STATE_WORDS];
-	for (int i = 0; i < STATE_WORDS; i++) {
-		const uint8_t *p = buf + 8 + 4 * i;
-		w[i] = p[0] | p[1] << 8 | p[2] << 16 | (uint32_t)p[3] << 24;
+	if (n < 28 || memcmp(h->magic, STATE_MAGIC, 4) != 0) return false;
+	if (h->version == 1) {
+		h->exact = 0; /* v1: the checkpoint only */
+		return true;
 	}
-	hd_state_t st = { (int)w[0], (int)w[1], (int)w[2], (int)w[3], w[4] };
+	return h->version == STATE_VERSION && n == sizeof *h;
+}
+
+/* Can this exact state be restored here? */
+static bool exact_ok(const state_hdr_t *h)
+{
+	if (!h->exact || h->build != build_id() || h->heap_sig != hd_heap_signature() ||
+	    h->data_size != (uint32_t)(__stop_hdstate_data - __start_hdstate_data) ||
+	    h->bss_size != (uint32_t)(__stop_hdstate_bss - __start_hdstate_bss))
+		return false;
+	for (int i = 0; i < STATE_PACKS; i++) {
+		if (!h->packs[i].name[0]) continue;
+		char name[9];
+		memcpy(name, h->packs[i].name, 8);
+		name[8] = 0;
+		uint32_t size = 0;
+		const uint8_t *p = hd_plat_pack(name, &size);
+		if ((uint64_t)(uintptr_t)p != h->packs[i].addr || size != h->packs[i].size) {
+			printf("hode: state: pack %s moved in the flash, restarting at the checkpoint\n", name);
+			return false;
+		}
+	}
+	return true;
+}
+
+static bool LoadState(const char *path)
+{
+	state_hdr_t h;
+	if (!read_header(path, &h)) return false;
+	if (exact_ok(&h)) {
+		snprintf(restore_path, sizeof restore_path, "%s", path);
+		restore_pending = true;
+		return true;
+	}
+	hd_state_t st = { (int)h.level, (int)h.checkpoint, (int)h.difficulty, (int)h.volume, h.cutscenes };
 	return hd_game_set_state(&st) != 0;
 }
 
@@ -461,21 +549,61 @@ static bool SaveState(const char *path)
 {
 	hd_state_t st;
 	if (!hd_game_get_state(&st)) return false;
-	const uint32_t w[STATE_WORDS] = { (uint32_t)st.level, (uint32_t)st.checkpoint, (uint32_t)st.difficulty,
-	                                  (uint32_t)st.volume, st.cutscenes };
-	uint8_t buf[8 + 4 * STATE_WORDS] = { 'H', 'O', 'D', 'S', 1, 0, 0, 0 };
-	for (int i = 0; i < STATE_WORDS; i++) {
-		uint8_t *p = buf + 8 + 4 * i;
-		p[0] = w[i];
-		p[1] = w[i] >> 8;
-		p[2] = w[i] >> 16;
-		p[3] = w[i] >> 24;
+	state_hdr_t h;
+	memset(&h, 0, sizeof h);
+	memcpy(h.magic, STATE_MAGIC, 4);
+	h.version = STATE_VERSION;
+	h.level = st.level;
+	h.checkpoint = st.checkpoint;
+	h.difficulty = st.difficulty;
+	h.volume = st.volume;
+	h.cutscenes = st.cutscenes;
+	h.exact = hd_safe_point != 0;
+	h.build = build_id();
+	h.heap_sig = hd_heap_signature();
+	h.data_size = (uint32_t)(__stop_hdstate_data - __start_hdstate_data);
+	h.bss_size = (uint32_t)(__stop_hdstate_bss - __start_hdstate_bss);
+	const char *names[STATE_PACKS] = { "setup", (st.level >= 0 && st.level < 9) ? level_packs[st.level] : "" };
+	for (int i = 0; i < STATE_PACKS; i++) {
+		uint32_t size = 0;
+		const uint8_t *p = names[i][0] ? hd_plat_pack(names[i], &size) : NULL;
+		if (!p) continue;
+		strncpy(h.packs[i].name, names[i], sizeof h.packs[i].name);
+		h.packs[i].addr = (uint64_t)(uintptr_t)p;
+		h.packs[i].size = size;
 	}
 	FILE *f = fopen(path, "wb");
 	if (!f) return false;
-	bool ok = fwrite(buf, 1, sizeof buf, f) == sizeof buf;
+	bool ok = fwrite(&h, 1, sizeof h, f) == sizeof h;
+	if (ok && h.exact) {
+		ok = fwrite(__start_hdstate_data, 1, h.data_size, f) == h.data_size &&
+		     fwrite(__start_hdstate_bss, 1, h.bss_size, f) == h.bss_size &&
+		     hd_heap_save(file_write, f) == 0;
+	}
 	fclose(f);
+	printf("hode: state saved (%s)\n", h.exact ? "exact" : "checkpoint");
 	return ok;
+}
+
+/* The pending exact state: memory restored, then on to app_main. */
+static void restore_and_jump(void)
+{
+	restore_pending = false;
+	FILE *f = fopen(restore_path, "rb");
+	if (!f) hd_plat_fatal("save state: cannot open the file again");
+	state_hdr_t h;
+	hd_fs_close_files();
+	bool ok = fread(&h, 1, sizeof h, f) == sizeof h &&
+	          fread(__start_hdstate_data, 1, h.data_size, f) == h.data_size &&
+	          fread(__start_hdstate_bss, 1, h.bss_size, f) == h.bss_size &&
+	          hd_heap_load(file_read, f) == 0;
+	fclose(f);
+	if (!ok) hd_plat_fatal("save state: the file is incomplete (memory lost)");
+	hd_fs_reopen_files();
+	audio_locked = 0;
+	hd_safe_point = 0;
+	printf("hode: state loaded (exact)\n");
+	longjmp(hd_top, 1);
 }
 
 static void *Screenshot(void)
@@ -569,7 +697,8 @@ void app_main(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 	printf("hode: heap %lu KB\n", (unsigned long)(hd_heap_total() / 1024));
 
 	audio_start_playing(AUDIO_PERIOD);
-	/* "Resume game": the state is pending, hd_game_run() starts there */
+	/* "Resume game": an exact state is restored below, a checkpoint state
+	   is pending (hd_game_run() starts there) */
 	/* the packs (tools/hod_pack.py, made from the player's CD) */
 	{
 		uint32_t n = 0;
@@ -580,7 +709,14 @@ void app_main(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 			hd_plat_fatal(msg);
 		}
 	}
+	/* an exact save state loaded: the level goes on from here */
+	if (setjmp(hd_top)) {
+		hd_game_continue();
+		odroid_system_switch_app(0);
+		return;
+	}
 	if (load_state) odroid_system_emu_load_state(save_slot);
+	if (restore_pending) restore_and_jump();
 #ifdef HD_DEBUG_LEVEL
 	/* debug builds (make HD_DEBUG_LEVEL=1): <data folder>/level.txt =
 	   "level checkpoint" starts there without the menu */

@@ -1996,6 +1996,17 @@ void Game::mainLoop(int level, int checkpoint, bool levelChanged) {
 	resetShootLvlObjectDataTable();
 	callLevel_initialize();
 	restartLevel();
+#ifdef GNW
+	gnwLevelLoop();
+}
+
+/* The frames of a level (end of mainLoop()), also entered directly after a
+   save state is loaded (src/port/hd_game.cpp): the state is taken during
+   the sleep between two frames (hd_safe_point). */
+extern int hd_safe_point;
+
+void Game::gnwLevelLoop() {
+#endif
 	while (true) {
 		const int frameTimeStamp = g_system->getTimeStamp() + _frameMs;
 		levelMainLoop();
@@ -2003,7 +2014,13 @@ void Game::mainLoop(int level, int checkpoint, bool levelChanged) {
 			break;
 		}
 		const int delay = MAX<int>(10, frameTimeStamp - g_system->getTimeStamp());
+#ifdef GNW
+		hd_safe_point = 1;
 		g_system->sleep(delay);
+		hd_safe_point = 0;
+#else
+		g_system->sleep(delay);
+#endif
 	}
 	_animBackgroundDataCount = 0;
 	callLevel_terminate();
