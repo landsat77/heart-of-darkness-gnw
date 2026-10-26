@@ -77,11 +77,23 @@ def make_pack(files):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("data", help="folder with SETUP.DAT and the *_HOD.* files")
-    ap.add_argument("out", help="output folder (e.g. the SD card's /homebrews/HeartOfDarkness)")
+    ap.add_argument("out", nargs="?", default="HeartOfDarkness",
+                    help="output folder: the SD card's homebrews/HeartOfDarkness "
+                         "(default: a HeartOfDarkness folder here, to copy there)")
     ap.add_argument("--paf", help="hod.paf (the CD's paf folder), for the cutscenes")
     ap.add_argument("--no-paf", action="store_true", help="no cutscenes")
     args = ap.parse_args()
+    if not find(args.data, "SETUP.DAT"):
+        msg = f"SETUP.DAT not found in {args.data}: the game's files are needed."
+        if find(args.data, "HeartOfDarkness.exe"):
+            msg += ("\nOn the CD they are inside HeartOfDarkness.exe: open it with 7-Zip,"
+                    " extract everything to a folder, and give that folder.")
+        else:
+            msg += ("\nInstall the game from the CD, or open the CD's HeartOfDarkness.exe"
+                    " with 7-Zip and extract everything to a folder.")
+        sys.exit(msg)
     os.makedirs(args.out, exist_ok=True)
+    print(f"output: {os.path.abspath(args.out)}")
 
     groups = [("setup", ["SETUP.DAT", "HOD.DEM"])]
     for lvl in LEVELS:
