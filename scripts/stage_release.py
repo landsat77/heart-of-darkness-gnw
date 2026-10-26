@@ -220,15 +220,11 @@ def stage_release(
 
     archive_name = f"{stem}-{tag_slug}.zip"
     archive_path = out_dir / archive_name
-    # Rick Dangerous: the game's data is in the pack, made by `make` beside
-    # the .bin (build/sd/homebrews/<stem>.xrk).
+    # Heart of Darkness: the game's data is NOT distributed; the zip
+    # carries the tools that make the packs from the player's own CD.
     members = [(sd_bin, f"{sd_dir}/{packed_name}")]
-    pack = bin_path.with_suffix(".xrk")
-    if not pack.is_file():
-        pack = ROOT / "build" / "sd" / sd_dir / f"{Path(packed_name).stem}.xrk"
-    if not pack.is_file():
-        raise SystemExit(f"pack not found: {pack}")
-    members.append((pack, f"{sd_dir}/{pack.name}"))
+    for tool in ("hod_pack.py", "paf_convert.py"):
+        members.append((ROOT / "tools" / tool, f"tools/{tool}"))
     for extra in (ROOT / "INSTALL.md",):
         if extra.exists():
             members.append((extra, extra.name))

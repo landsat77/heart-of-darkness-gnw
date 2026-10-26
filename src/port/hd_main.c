@@ -41,6 +41,7 @@
 
 #define APP_ID APPID_HOMEBREW
 #define AUDIO_PERIOD (HD_SAMPLE_RATE / 50)	/* 441 samples, 20 ms */
+#define AHB_MARGIN (16 * 1024)
 #define RAM_MARGIN (16 * 1024)			/* RAM_EMU left to the firmware */
 
 #ifdef HOST_BUILD
@@ -207,6 +208,7 @@ static void read_buttons(void)
  * HD_SHOTS=dir     with HD_SHOT_AT="tick,tick,...": the LCD as PPM files
  * HD_HEAP_KB=n     heap size (default: what the console has)
  * HD_STATE=file    with HD_SAVE_AT=tick / HD_LOAD_AT=tick: save state tests
+ * HD_WAV=file      the sound (raw s16 mono 22050 Hz)
  */
 static bool LoadState(const char *path);
 static bool SaveState(const char *path);
@@ -299,14 +301,12 @@ void hd_plat_audio_lock(int lock)
 
 uint32_t hd_plat_time_ms(void) { return (uint32_t)(samples_played * 1000 / HD_SAMPLE_RATE); }
 
-void hd_plat_service(void)
-{
-	wdog_refresh();
-	read_buttons();
-#ifdef HOST_BUILD
-	test_step();
-#endif
+/* One sound period into the free half of the DMA buffer. It must be done
+   within 20 ms of the previous sync (or the half plays again). */
+static bool period_filled;
 
+static void fill_period(void)
+{
 	memset(stereo, 0, sizeof stereo);
 	if (audio_proc && !audio_locked) audio_proc(audio_user, stereo, AUDIO_PERIOD * 2);
 	if (!common_emu_sound_loop_is_muted()) {
@@ -318,13 +318,36 @@ void hd_plat_service(void)
 				buffer[i] = (int16_t)(((stereo[2 * i] + stereo[2 * i + 1]) / 2) * volume / 255);
 		}
 	}
+#ifdef HOST_BUILD
+	/* HD_WAV=file: the sound (mono, 22050 Hz, raw s16) */
+	static FILE *wav;
+	if (!wav && getenv("HD_WAV")) wav = fopen(getenv("HD_WAV"), "wb");
+	if (wav) {
+		int16_t mono[AUDIO_PERIOD];
+		for (int i = 0; i < AUDIO_PERIOD; i++) mono[i] = (int16_t)((stereo[2 * i] + stereo[2 * i + 1]) / 2);
+		fwrite(mono, sizeof mono, 1, wav);
+		fflush(wav);
+	}
+#endif
 	samples_played += AUDIO_PERIOD;
+	period_filled = true;
+}
+
+void hd_plat_service(void)
+{
+	wdog_refresh();
+	read_buttons();
+#ifdef HOST_BUILD
+	test_step();
+#endif
+	if (!period_filled) fill_period();
 #ifndef HOST_BUILD
 	/* every 5 s: game frames per second, time waiting for the audio
 	   (idle), heap */
 	static uint32_t stat_idle, stat_start, stat_periods;
 	uint32_t t0 = HAL_GetTick();
 	common_emu_sound_sync(false);
+	period_filled = false;
 	uint32_t t1 = HAL_GetTick();
 	stat_idle += t1 - t0;
 	if (++stat_periods == 1) stat_start = t0;
@@ -339,6 +362,23 @@ void hd_plat_service(void)
 	}
 #else
 	common_emu_sound_sync(false);
+	period_filled = false;
+#endif
+}
+
+/* During long work (a cutscene frame read from the SD card): keep the
+   sound fed without waiting. */
+void hd_plat_poll(void)
+{
+#ifndef HOST_BUILD
+	wdog_refresh();
+	if (!period_filled) fill_period();
+	if (dma_counter != common_emu_sound_dma_marker) {
+		/* the DMA moved on: what the sync would have returned */
+		common_emu_sound_dma_marker = dma_counter;
+		period_filled = false;
+		fill_period();
+	}
 #endif
 }
 
@@ -477,7 +517,7 @@ void app_main(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 	size_t ram = ram_get_free_size();
 #ifdef HOST_BUILD
 	/* the console's: RAM_EMU left after the code, and DTCM */
-	size_t want = (getenv("HD_HEAP_KB") ? atoi(getenv("HD_HEAP_KB")) : 590) * 1024 + RAM_MARGIN;
+	size_t want = (getenv("HD_HEAP_KB") ? atoi(getenv("HD_HEAP_KB")) : 717) * 1024 + RAM_MARGIN;
 	if (ram > want) ram = want;
 #endif
 	if (ram > RAM_MARGIN) {
@@ -494,6 +534,23 @@ void app_main(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 		dtcm -= 1024;
 		hd_heap_add(dtc_malloc(dtcm), dtcm);
 	}
+	/* ITCM (unused: no code there) and the AHB heap, minus a margin for the
+	   firmware (pause menu, files) */
+	size_t itcm = itc_get_free_size();
+	if (itcm > 8192) {
+		itcm -= 1024;
+		void *p = itc_malloc(itcm);
+		if (p != (void *)0xffffffff) hd_heap_add(p, itcm);
+	}
+	size_t ahb = ahb_get_free_size();
+	for (ahb = ahb > AHB_MARGIN ? ahb - AHB_MARGIN : 0; ahb >= 8192; ahb -= 4096) {
+		void *p = ahb_malloc(ahb);
+		if (p) {
+			hd_heap_add(p, ahb);
+			break;
+		}
+	}
+	printf("hode: dtcm %u, itcm %u, ahb %u bytes\n", (unsigned)dtcm, (unsigned)itcm, (unsigned)ahb);
 #endif
 	printf("hode: heap %lu KB\n", (unsigned long)(hd_heap_total() / 1024));
 

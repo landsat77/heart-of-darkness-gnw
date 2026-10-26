@@ -38,7 +38,8 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            gcc-arm-none-eabi libnewlib-arm-none-eabi libsdl2-dev python3-pil
+            gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-dev \
+            libsdl2-dev python3-pil
 
       - name: Read project metadata
         id: meta
@@ -48,13 +49,12 @@ jobs:
           echo "target_elf=$(make --no-print-directory print-TARGET_ELF)" >> "${GITHUB_OUTPUT}"
           echo "target_map=$(make --no-print-directory print-TARGET_MAP)" >> "${GITHUB_OUTPUT}"
 
-      # The homebrew, its pack (the game, its music, the ver1.10
-      # backgrounds) and the SD card's folder, build/sd/homebrews.
+      # The homebrew (build/sd/homebrews). The game's data is not in the
+      # repository: players make the packs from their CD (tools/hod_pack.py).
       - name: Build
         run: make --no-print-directory -j"$(nproc)"
 
-      # The attract demo against the Amiga port's reference run, and the
-      # ver1.10 backgrounds through every stage.
+      # The PC build (same game and port code, SDL2).
       - name: PC build (same game code)
         run: make --no-print-directory host
 

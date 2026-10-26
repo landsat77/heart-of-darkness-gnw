@@ -66,6 +66,7 @@ struct GwpReader {
 
 	int byte() {
 		if (pos >= len) {
+			hd_plat_poll();
 			len = f->read(buf, PafPlayer::kBufferBlockSize);
 			pos = 0;
 			if (len <= 0) {
@@ -101,6 +102,7 @@ struct GwpReader {
 	void bytes(uint8_t *dst, uint32_t n) {
 		while (n) {
 			if (pos >= len) {
+				hd_plat_poll();
 				len = f->read(buf, PafPlayer::kBufferBlockSize);
 				pos = 0;
 				if (len <= 0) {
@@ -137,6 +139,7 @@ PafPlayer::PafPlayer(FileSystem *fs)
 		_file._fp = 0;
 	}
 	_skipCutscenes = !fp;
+	hd_plat_log(fp ? "cutscenes: hod.gwp" : "no hod.gwp: no cutscenes");
 	_videoNum = -1;
 	memset(&_pafHdr, 0, sizeof(_pafHdr));
 	memset(_pageBuffers, 0, sizeof(_pageBuffers));
@@ -193,6 +196,9 @@ void PafPlayer::play(int num) {
 		return;
 	}
 	_playedMask |= 1 << num;
+	char msg[48];
+	snprintf(msg, sizeof(msg), "cutscene %d", num);
+	hd_plat_log(msg);
 	_file.seek(offset, SEEK_SET);
 	GwpReader r;
 	r.f = &_file;
@@ -266,9 +272,13 @@ void PafPlayer::play(int num) {
 		if (g_system->inp.keyPressed(SYS_INP_ESC) || g_system->inp.skip) {
 			break;
 		}
-		const int delay = MAX<int>(10, frameTime - g_system->getTimeStamp());
-		g_system->sleep(delay);
-		frameTime = g_system->getTimeStamp() + frameMs;
+		/* a fixed schedule: the clock moves by 20 ms steps (sound
+		   periods), re-timing from "now" would drift from the sound */
+		const int delay = (int)(frameTime - g_system->getTimeStamp());
+		if (delay > 0) {
+			g_system->sleep(delay);
+		}
+		frameTime += frameMs;
 	}
 
 	if (_pafCb.endProc) {

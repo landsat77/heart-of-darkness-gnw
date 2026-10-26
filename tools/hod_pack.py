@@ -7,8 +7,11 @@ SETUP.DAT and, per level, XXXX_HOD.LVL / .SSS / .MST.
 
 Output (in the output folder, one pack per level so that only the setup
 and the level being played need room in the external flash):
-  setup.hod                SETUP.DAT
+  setup.hod                SETUP.DAT, HOD.DEM
   rock.hod ... dark.hod    the level's LVL, SSS and MST
+  hod.gwp                  the cutscenes, from the CD's paf/hod.paf
+                           (tools/paf_convert.py; --paf, or found in the
+                           data folder or its paf folder)
 
 The files of the v1.2 data (all known Windows releases but the first) are
 "sector aligned": 2048-byte sectors, each 2044 bytes of data and a 4-byte
@@ -75,10 +78,12 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("data", help="folder with SETUP.DAT and the *_HOD.* files")
     ap.add_argument("out", help="output folder (e.g. the SD card's /homebrews/HeartOfDarkness)")
+    ap.add_argument("--paf", help="hod.paf (the CD's paf folder), for the cutscenes")
+    ap.add_argument("--no-paf", action="store_true", help="no cutscenes")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
 
-    groups = [("setup", ["SETUP.DAT"])]
+    groups = [("setup", ["SETUP.DAT", "HOD.DEM"])]
     for lvl in LEVELS:
         groups.append((lvl, [f"{lvl.upper()}_HOD.LVL", f"{lvl.upper()}_HOD.SSS", f"{lvl.upper()}_HOD.MST"]))
 
@@ -103,6 +108,8 @@ def main():
         for n in names:
             path = find(args.data, n)
             if not path:
+                if n == "HOD.DEM":
+                    continue
                 if group == "setup":
                     sys.exit(f"{n} not found in {args.data}")
                 break
@@ -110,7 +117,7 @@ def main():
             if n == "SETUP.DAT":
                 flags |= info
             files.append((n.upper(), data, flags))
-        if len(files) != len(names):
+        if len(files) != len(names) and group != "setup":
             print(f"{group}: missing files, skipped (demo version?)")
             continue
         blob = make_pack(files)
@@ -119,6 +126,22 @@ def main():
         total += len(blob)
         print(f"{group}.hod: {len(blob) / 1e6:.1f} MB")
     print(f"total {total / 1e6:.1f} MB")
+
+    if args.no_paf:
+        return
+    paf = args.paf
+    if not paf:
+        paf = find(args.data, "hod.paf")
+        sub = find(args.data, "paf")
+        if not paf and sub and os.path.isdir(sub):
+            paf = find(sub, "hod.paf")
+    if not paf:
+        print("hod.paf not found (the CD's paf folder; --paf): no cutscenes")
+        return
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import paf_convert
+    print(f"cutscenes: {paf} -> hod.gwp (a few minutes)")
+    paf_convert.convert(paf, os.path.join(args.out, "hod.gwp"))
 
 
 if __name__ == "__main__":

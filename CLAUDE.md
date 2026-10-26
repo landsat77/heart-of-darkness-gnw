@@ -1,4 +1,65 @@
-# CLAUDE.md — Porting an emulator core (Retro-Go SD)
+# CLAUDE.md — Heart of Darkness homebrew (Retro-Go SD)
+
+This repo is ONE GWHB homebrew: Heart of Darkness (hode, Gregory Montoir's
+engine rewrite) for the Game & Watch, built with the retro-go-sd-templates
+SDK. The second part of this file is the SDK's generic porting guide.
+
+## Project notes
+
+- Target firmware: Retro-Go SD v2.0.0-rc1+ (ABI v2).
+  `/homebrews/HeartOfDarkness.bin` + the folder `/homebrews/HeartOfDarkness/`
+  (same stem): `setup.hod`, one pack per level (`rock.hod` ... `dark.hod`),
+  `hod.gwp` (cutscenes). Saves (`setup.cfg`, save states) in
+  `/retro-go/saves/hode/`.
+- Game data is NOT in the repo (commercial game, no redistribution): the
+  player runs `tools/hod_pack.py <game folder> <out>` on his own CD's data
+  (v1.0/v1.1 plain files or v1.2 sector-aligned: the checksums are
+  removed, `File::seek` SEEK_SET maps sector offsets, `AssetFile.sectored`;
+  the version and demo flags are stored in SETUP.DAT's entry flags so the
+  engine never opens a level pack at boot). Only v1.1 tested.
+- Engine: `src/hode` = usineur/hode @ 59f3c46 (no licence file upstream:
+  the README says so). Changes only under `#ifdef GNW`. Packs are mapped
+  from the external flash (`odroid_overlay_cache_file_in_flash`, one level
+  pack + setup at a time in practice) and read IN PLACE: sprites,
+  backgrounds, masks, menu buffers, PCM strides (`SssPcm::gnwData`, the
+  mixer decodes strides on the fly: `pcm->ptr` is a virtual address), the
+  loading image and the font. Only offset tables / headers the engine
+  writes are in RAM (`Menu::gnwCopy`).
+- Memory: own heap (`hd_heap.c`, first fit, boundary tags) over RAM_EMU
+  left after the code, the LUT8 bonus pool (display in LUT8: 8-bit blit
+  scaled 5/4 with the CLUT), DTCM, ITCM and part of the AHB heap. malloc &
+  co are mapped by `hd_glue.h` (-include), new/delete in `hd_cxx.cpp`. No
+  canvas: `System_GNW::copyRect` keeps the engine's buffer pointer (every
+  copyRect is the whole screen). Measured in gwemu (debug build, make
+  HD_DEBUG_LEVEL=1 + `level.txt` in the data folder): heap 739 KB before
+  ITCM/AHB, level peaks rock 571, fort 513, pwr1 698 (the worst: shadow
+  masks 98.5 KB + transform layer 49 KB), isld 583, lava 614, pwr2 607 KB.
+  The PC build's numbers are ~50 KB higher (64-bit pointers).
+- Cutscenes: the PAF player needs ~330 KB (4 pages + demux), impossible
+  inside a level (most cutscenes are). `tools/paf_convert.py` decodes
+  hod.paf on the PC (same algorithm as paf.cpp) into hod.gwp: per frame a
+  delta of the 256x192 picture + mono 22050 Hz sound (150 ms lead); the
+  GNW PafPlayer (paf.cpp) streams it into the shadow layer
+  (`hd_cutscene_picture()`) with a 16 KB sound ring.
+- Timing: the game's clock is the sound played (`hd_plat_time_ms`, 441
+  samples per 20 ms period); `System::sleep` runs `hd_plat_service`
+  (buttons + pause menu, audio period, wdog). 12.5 fps (80 ms frames).
+- Save states: level + checkpoint + difficulty/volume/cutscenes seen
+  (`hd_game_get_state/set_state`): loading ends the level (`_endLevel`)
+  and restarts at the checkpoint (as the game does after a death).
+- PC build: `make host`; `./HeartOfDarkness_host <dir>/HeartOfDarkness.bin`
+  (the packs in `<dir>/HeartOfDarkness/`). Tests: `HD_TICKS`, `HD_SCRIPT`
+  ("tick:UDLRABTG,..."), `HD_SHOTS`/`HD_SHOT_AT`, `HD_LEVEL=l[:c]`,
+  `HD_STATE` + `HD_SAVE_AT`/`HD_LOAD_AT`, `HD_HEAP_KB` (default = the
+  console's), `HD_HEAPLOG=bytes`, `HD_HEAPTRACE=1` (+ tools/heap_live.py),
+  `HD_SHADOWSTAT=1`.
+- gwemu: device log = firmware `logbuf` (AHB 0x30000004, 4 KB ring):
+  `-monitor unix:...` then `pmemsave 0x30000004 4100 "file"`. Log line
+  every 5 s: "hode: fps, idle, heap used/total, peak".
+
+---
+
+# SDK guide — porting an emulator core (Retro-Go SD)
 
 This repository is a **single-project** template for a Game & Watch
 **dynamic core** or a **GWHB homebrew**: a freestanding Cortex-M7 binary

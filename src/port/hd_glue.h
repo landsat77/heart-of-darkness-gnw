@@ -7,9 +7,9 @@
 #include <string.h>
 #include "hd_heap.h"
 
-#define malloc(n) hd_malloc(n)
-#define calloc(n, s) hd_calloc(n, s)
-#define realloc(p, n) hd_realloc(p, n)
+#define malloc(n) hd_engine_malloc(n)
+#define calloc(n, s) hd_engine_calloc(n, s)
+#define realloc(p, n) hd_engine_realloc(p, n)
 #define free(p) hd_free(p)
 #define strdup(s) hd_strdup(s)
 

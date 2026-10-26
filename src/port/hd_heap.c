@@ -9,6 +9,7 @@
 #endif
 #include <stdint.h>
 #include <string.h>
+#include <stdio.h>
 
 #include "hd_heap.h"
 
@@ -20,7 +21,7 @@ typedef struct block {
 #define HDR sizeof(block_t)
 #define USED 1u
 #define MIN_BLOCK (HDR + 16)
-#define MAX_REGIONS 4
+#define MAX_REGIONS 8
 
 typedef struct {
 	uint8_t *start, *end;	/* end = sentinel header (size 0, used) */
@@ -194,4 +195,43 @@ size_t hd_heap_largest_free(void)
 		for (block_t *b = (block_t *)regions[i].start; (uint8_t *)b < regions[i].end; b = next_block(b))
 			if (!(b->size & USED) && bsize(b) > best) best = bsize(b);
 	return best > HDR ? best - HDR : 0;
+}
+
+/* The engine's malloc & co (hd_glue.h): hode rarely checks for NULL, so
+   running out of memory stops here with a message instead of a crash. */
+#include "hd_plat.h"
+
+static void out_of_memory(size_t n)
+{
+	char msg[96];
+	snprintf(msg, sizeof msg, "out of memory (%lu bytes, largest free %lu)", (unsigned long)n,
+	         (unsigned long)hd_heap_largest_free());
+	hd_plat_fatal(msg);
+}
+
+void *hd_engine_malloc(size_t n)
+{
+#ifdef HOST_BUILD
+	if (!heap_log_caller) heap_log_caller = __builtin_return_address(0);
+#endif
+	void *p = hd_malloc(n);
+	if (!p) out_of_memory(n);
+	return p;
+}
+
+void *hd_engine_calloc(size_t count, size_t size)
+{
+#ifdef HOST_BUILD
+	heap_log_caller = __builtin_return_address(0);
+#endif
+	void *p = hd_calloc(count, size);
+	if (!p && count && size) out_of_memory(count * size);
+	return p;
+}
+
+void *hd_engine_realloc(void *p, size_t n)
+{
+	void *q = hd_realloc(p, n);
+	if (!q && n) out_of_memory(n);
+	return q;
 }

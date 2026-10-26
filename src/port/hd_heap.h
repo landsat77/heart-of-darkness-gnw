@@ -18,6 +18,10 @@ size_t hd_heap_used(void);
 size_t hd_heap_peak(void);
 size_t hd_heap_total(void);
 size_t hd_heap_largest_free(void);
+/* malloc & co for the engine: fatal error when out of memory */
+void *hd_engine_malloc(size_t n);
+void *hd_engine_calloc(size_t count, size_t size);
+void *hd_engine_realloc(void *p, size_t n);
 #ifdef HOST_BUILD
 void hd_heap_set_caller(void *caller);
 #endif

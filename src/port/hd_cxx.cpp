@@ -1,6 +1,5 @@
 /* C++ runtime pieces: new / delete on the port's heap (hd_heap.c). */
 #include <stddef.h>
-#include <new>
 
 #include "hd_heap.h"
 #include "hd_plat.h"

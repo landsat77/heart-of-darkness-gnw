@@ -47,6 +47,8 @@ uint32_t hd_plat_time_ms(void);
 /* One audio period (DMA half, ~20 ms): sound, buttons, Retro-Go menu,
    picture. Blocks until the period. */
 void hd_plat_service(void);
+/* Keep the sound fed during long work (no waiting): cutscene reads. */
+void hd_plat_poll(void);
 
 /* The game's mixer: 22050 Hz stereo, len = int16 values. Not called while
    locked (hd_plat_audio_lock). */

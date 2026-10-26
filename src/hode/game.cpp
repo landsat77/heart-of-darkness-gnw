@@ -3965,6 +3965,13 @@ void Game::clearDeclaredLvlObjectsList() {
 	_declaredLvlObjectsList[kMaxLvlObjects - 1].nextPtr = 0;
 	_declaredLvlObjectsNextPtr = &_declaredLvlObjectsList[0];
 	_declaredLvlObjectsListCount = 0;
+#ifdef GNW
+	/* pointers into the list: stale when a level is started again (save
+	   state loaded in the same level; the game itself never does that) */
+	_plasmaExplosionObject = 0;
+	_plasmaCannonObject = 0;
+	_specialAnimLvlObject = 0;
+#endif
 }
 
 void Game::initLvlObjects() {
