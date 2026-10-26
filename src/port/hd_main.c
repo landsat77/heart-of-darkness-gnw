@@ -76,12 +76,18 @@ const uint8_t *hd_plat_pack(const char *name, uint32_t *size)
 	char path[300];
 	snprintf(path, sizeof path, "%s/%s.hod", data_dir, name);
 	FILE *f = fopen(path, "rb");
-	if (!f) return NULL;
+	if (!f) {
+		printf("hode: %s not found\n", path);
+		return NULL;
+	}
 	fseek(f, 0, SEEK_END);
 	uint32_t n = ftell(f);
 	fclose(f);
 	const uint8_t *data = odroid_overlay_cache_file_in_flash(path, &n, false);
-	if (!data || !n) return NULL;
+	if (!data || !n) {
+		printf("hode: %s: could not be copied to the flash\n", path);
+		return NULL;
+	}
 	for (int i = 0; i < MAX_PACKS; i++) {
 		if (!packs[i].data) {
 			snprintf(packs[i].name, sizeof packs[i].name, "%s", name);
@@ -398,13 +404,21 @@ void hd_plat_fatal(const char *message)
 	exit(1);
 #else
 	char line[64];
+	/* black and white in the CLUT: the game's palette may not be set yet
+	   (white text would map to black) */
+	{
+		static const uint32_t clut[2] = { 0x000000, 0xFFFFFF };
+		lcd_set_clut(clut, 2);
+	}
+	lcd_wait_for_vblank();
 	lcd_clear_buffers();
-	odroid_overlay_draw_text(8, 80, WIDTH - 16, "Heart of Darkness:", 0xFFFF, 0x0000);
-	odroid_overlay_draw_text(8, 96, WIDTH - 16, message, 0xFFFF, 0x0000);
+	int y = 48;
+	y += odroid_overlay_draw_text(8, y, WIDTH - 16, "Heart of Darkness:", 0xFFFF, 0x0000) + 8;
+	y += odroid_overlay_draw_text(8, y, WIDTH - 16, message, 0xFFFF, 0x0000) + 8;
 	snprintf(line, sizeof line, "heap %lu/%lu KB, largest free %lu KB", (unsigned long)(hd_heap_used() / 1024),
 	         (unsigned long)(hd_heap_total() / 1024), (unsigned long)(hd_heap_largest_free() / 1024));
-	odroid_overlay_draw_text(8, 120, WIDTH - 16, line, 0xFFFF, 0x0000);
-	odroid_overlay_draw_text(8, 144, WIDTH - 16, "Press a button: back to the menu", 0xFFFF, 0x0000);
+	y += odroid_overlay_draw_text(8, y, WIDTH - 16, line, 0xFFFF, 0x0000) + 8;
+	odroid_overlay_draw_text(8, y, WIDTH - 16, "Press a button: back to the menu", 0xFFFF, 0x0000);
 	lcd_swap();
 	bool released = false;
 	while (1) {
@@ -556,6 +570,16 @@ void app_main(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 
 	audio_start_playing(AUDIO_PERIOD);
 	/* "Resume game": the state is pending, hd_game_run() starts there */
+	/* the packs (tools/hod_pack.py, made from the player's CD) */
+	{
+		uint32_t n = 0;
+		const uint8_t *setup = hd_plat_pack("setup", &n);
+		if (!setup || n < 16 || memcmp(setup, "HODP", 4) != 0) {
+			static char msg[400];
+			snprintf(msg, sizeof msg, "%s/setup.hod is missing or not a pack. Make the packs from your CD with tools/hod_pack.py (INSTALL.md).", data_dir);
+			hd_plat_fatal(msg);
+		}
+	}
 	if (load_state) odroid_system_emu_load_state(save_slot);
 #ifdef HD_DEBUG_LEVEL
 	/* debug builds (make HD_DEBUG_LEVEL=1): <data folder>/level.txt =
